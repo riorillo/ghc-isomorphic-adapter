@@ -216,12 +216,17 @@ export interface CopilotClientOptions {
   token?: string;
   /** Override the API endpoint (skips token-exchange discovery). */
   apiEndpoint?: string;
-  /** Custom editor version header (default: "CopilotChatAdapter/1.0.0"). */
+  /** Custom editor version header (default: "Neovim/0.9.5"). */
   editorVersion?: string;
   /** GitHub Enterprise Server URI (e.g. "https://github.mycompany.com"). */
   enterpriseUri?: string;
   /** GitHub API base URL (default: "https://api.github.com"). */
   githubApiUrl?: string;
+  /**
+   * Custom fetch function. Use `createExtensionFetch()` in browser
+   * to proxy all requests through the GHC Auth Bridge extension (bypasses CORS).
+   */
+  fetchFn?: typeof globalThis.fetch;
 }
 
 // ── Token exchange types ──────────────────────────────────────────

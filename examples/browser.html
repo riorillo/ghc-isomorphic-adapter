@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ghc-isomorphic-adapter – Browser Example</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; }
+    body { font-family: system-ui, sans-serif; background: #0d1117; color: #c9d1d9; padding: 2rem; max-width: 720px; margin: auto; }
+    h1 { font-size: 1.3rem; margin-bottom: .5rem; }
+    .badge { display: inline-block; font-size: .75rem; padding: 2px 8px; border-radius: 12px; margin-left: .5rem; }
+    .badge.ok { background: #238636; } .badge.no { background: #da3633; }
+    #auth-section, #chat-section { margin-top: 1.5rem; }
+    button { background: #238636; color: #fff; border: none; padding: .5rem 1rem; border-radius: 6px; cursor: pointer; font-size: .9rem; }
+    button:disabled { opacity: .5; cursor: default; }
+    button.danger { background: #da3633; }
+    #models { font-size: .8rem; color: #8b949e; margin-top: .5rem; }
+    #chat { border: 1px solid #30363d; border-radius: 8px; padding: 1rem; height: 320px; overflow-y: auto; margin-bottom: .75rem; white-space: pre-wrap; word-wrap: break-word; font-size: .9rem; background: #010409; }
+    .msg-user { color: #58a6ff; } .msg-assistant { color: #c9d1d9; } .msg-system { color: #8b949e; font-style: italic; }
+    #input-row { display: flex; gap: .5rem; }
+    #input-row input { flex: 1; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: .5rem; color: #c9d1d9; font-size: .9rem; }
+    #input-row input:focus { outline: none; border-color: #58a6ff; }
+  </style>
+</head>
+<body>
+
+<h1>ghc-isomorphic-adapter <span id="status" class="badge no">disconnected</span></h1>
+
+<!-- Auth -->
+<div id="auth-section">
+  <p id="auth-msg">Loading…</p>
+  <div style="margin-top:.75rem; display:flex; gap:.5rem; flex-wrap:wrap;">
+    <button id="btn-device" style="display:none">Sign in with GitHub</button>
+    <button id="btn-logout" class="danger" style="display:none">Logout</button>
+  </div>
+</div>
+
+<!-- Chat -->
+<div id="chat-section" style="display:none">
+  <p id="models"></p>
+  <div id="chat"></div>
+  <div id="input-row">
+    <input id="msg" type="text" placeholder="Type a message…" autocomplete="off" />
+    <button id="btn-send">Send</button>
+  </div>
+</div>
+
+<!--
+  We import directly from the ESM build.
+  In a real project you'd `import { … } from "ghc-isomorphic-adapter"` via a bundler.
+-->
+<script type="module">
+import {
+  CopilotChatClient,
+  ChatSession,
+  requestTokenFromExtension,
+  createExtensionFetch,
+  saveTokenToStorage,
+  clearTokenFromStorage,
+} from "../dist/index.js";
+
+// ── DOM refs ──────────────────────────────────────────────────────
+const status   = document.getElementById("status");
+const authMsg  = document.getElementById("auth-msg");
+const btnDevice = document.getElementById("btn-device");
+const btnLogout = document.getElementById("btn-logout");
+const chatSection = document.getElementById("chat-section");
+const chatEl   = document.getElementById("chat");
+const modelsEl = document.getElementById("models");
+const msgInput = document.getElementById("msg");
+const btnSend  = document.getElementById("btn-send");
+
+let client  = null;
+let session = null;
+
+// All browser requests go through the extension (no CORS issues)
+const fetchFn = createExtensionFetch();
+
+// ── Helpers ───────────────────────────────────────────────────────
+function log(text, cls = "msg-system") {
+  const span = document.createElement("span");
+  span.className = cls;
+  span.textContent = text + "\n";
+  chatEl.appendChild(span);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function setConnected(ok) {
+  status.textContent = ok ? "connected" : "disconnected";
+  status.className   = "badge " + (ok ? "ok" : "no");
+  chatSection.style.display = ok ? "" : "none";
+  btnLogout.style.display   = ok ? "" : "none";
+  btnDevice.style.display   = ok ? "none" : "";
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+async function tryInit() {
+  client = new CopilotChatClient({ fetchFn });
+  try {
+    await client.init();
+    authMsg.textContent = "Authenticated ✓";
+    setConnected(true);
+    await loadModels();
+    setupSession();
+  } catch {
+    authMsg.textContent = "No token found. Install the GHC Auth Bridge extension, then click Sign in.";
+    setConnected(false);
+  }
+}
+
+async function loadModels() {
+  try {
+    const models = await client.getModels();
+    modelsEl.textContent = `Models: ${models.map(m => m.id).join(", ")}`;
+  } catch (e) {
+    modelsEl.textContent = `(could not load models: ${e.message})`;
+  }
+}
+
+function setupSession() {
+  session = new ChatSession(client, {
+    model: "gpt-5-mini",
+    systemPrompt: "You are a helpful assistant. Keep answers concise.",
+  });
+  chatEl.innerHTML = "";
+  log("Session started. Type a message below.");
+}
+
+// ── Device flow via extension bridge ───────────────────────────────
+btnDevice.addEventListener("click", async () => {
+  btnDevice.disabled = true;
+  authMsg.textContent = "Starting device flow via extension…";
+
+  try {
+    const token = await requestTokenFromExtension((codes) => {
+      authMsg.innerHTML =
+        `Open <a href="${codes.verificationUri}" target="_blank" style="color:#58a6ff">${codes.verificationUri}</a> ` +
+        `and enter: <strong style="font-size:1.2rem;letter-spacing:2px">${codes.userCode}</strong>`;
+    });
+    // Token is already in localStorage via the bridge; init the client with it
+    client = new CopilotChatClient({ token, fetchFn });
+    await client.init();
+    authMsg.textContent = "Authenticated ✓";
+    setConnected(true);
+    await loadModels();
+    setupSession();
+  } catch (e) {
+    authMsg.textContent = `Auth failed: ${e.message}. Is the GHC Auth Bridge extension installed?`;
+  }
+  btnDevice.disabled = false;
+});
+
+// ── Logout ────────────────────────────────────────────────────────
+btnLogout.addEventListener("click", () => {
+  clearTokenFromStorage();
+  client = null;
+  session = null;
+  setConnected(false);
+  authMsg.textContent = "Logged out.";
+  chatEl.innerHTML = "";
+});
+
+// ── Chat (streaming) ──────────────────────────────────────────────
+async function sendMessage() {
+  const text = msgInput.value.trim();
+  if (!text || !session) return;
+  msgInput.value = "";
+  btnSend.disabled = true;
+
+  log(`You: ${text}`, "msg-user");
+
+  // Create a span for the assistant's streaming response
+  const span = document.createElement("span");
+  span.className = "msg-assistant";
+  chatEl.appendChild(span);
+
+  try {
+    let full = "";
+    for await (const chunk of session.sendStream(text)) {
+      full += chunk;
+      span.textContent = `Assistant: ${full}`;
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+    span.textContent += "\n";
+  } catch (e) {
+    log(`Error: ${e.message}`);
+  }
+
+  btnSend.disabled = false;
+  msgInput.focus();
+}
+
+btnSend.addEventListener("click", sendMessage);
+msgInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendMessage();
+});
+
+// ── Boot ──────────────────────────────────────────────────────────
+tryInit();
+</script>
+</body>
+</html>

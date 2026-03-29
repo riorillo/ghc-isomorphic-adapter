@@ -24,13 +24,6 @@ interface PollResponse {
  *
  * Returns the device/user codes for the user to authorize.
  * Call `pollDeviceFlow()` to wait for authorization.
- *
- * @example
- * ```ts
- * const codes = await startDeviceFlow();
- * console.log(`Go to ${codes.verificationUri} and enter: ${codes.userCode}`);
- * const token = await pollDeviceFlow(codes);
- * ```
  */
 export async function startDeviceFlow(
   options?: { githubUrl?: string },

@@ -3,9 +3,17 @@ export { CopilotChatClient } from "./client.js";
 export { ChatSession } from "./session.js";
 
 // Auth
-export { resolveToken, readTokenFromConfig, saveTokenToConfig } from "./auth.js";
+export {
+  resolveToken,
+  readTokenFromConfig,
+  readTokenFromStorage,
+  saveToken,
+  saveTokenToStorage,
+  clearTokenFromStorage,
+} from "./auth.js";
 export { exchangeToken, TokenManager } from "./token-exchange.js";
 export { startDeviceFlow, pollDeviceFlow } from "./device-flow.js";
+export { requestTokenFromExtension, createExtensionFetch } from "./extension-bridge.js";
 
 // Models
 export { fetchModels } from "./models.js";

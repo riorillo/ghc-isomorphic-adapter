@@ -1,82 +1,140 @@
 # ghc-isomorphic-adapter
 
-> ⚠️ **Educational project only.** This library is intended for learning and experimentation purposes. It is not affiliated with, endorsed by, or supported by GitHub. Use at your own risk and in compliance with GitHub's Terms of Service.
+> ⚠️ **Solo per scopi educativi.** Questa libreria è destinata all'apprendimento e alla sperimentazione. Non è affiliata, approvata o supportata da GitHub. Usala a tuo rischio e in conformità con i Termini di Servizio di GitHub.
 
-Minimal, isomorphic TypeScript library for the **GitHub Copilot Chat API**.  
-Supports streaming, sessions, tool calling, and automatic token management.
+Libreria TypeScript minimale e isomorfica per la **GitHub Copilot Chat API**.  
+Supporta streaming, sessioni, chiamate a strumenti e gestione automatica dei token.
 
-## Install
+## Installazione
 
 ```bash
 npm install ghc-isomorphic-adapter
 ```
 
-## Quick Start
+## Avvio rapido
 
 ```ts
 import { CopilotChatClient } from "ghc-isomorphic-adapter";
 
 const client = new CopilotChatClient();
 
-// Option 1: Device flow (interactive – recommended for first use)
+// Opzione 1: Device flow (interattivo – consigliato al primo utilizzo)
 const ghToken = await client.initWithDeviceFlow((codes) => {
-  console.log(`Open ${codes.verificationUri} and enter: ${codes.userCode}`);
+  console.log(`Apri ${codes.verificationUri} e inserisci: ${codes.userCode}`);
 });
-// Save ghToken for future use (export GH_COPILOT_TOKEN=ghu_...)
+// Salva ghToken per usi futuri (export GH_COPILOT_TOKEN=ghu_...)
 
-// Option 2: Existing token (env, config file, or explicit)
+// Opzione 2: Token esistente (env, file di configurazione o esplicito)
 const client2 = new CopilotChatClient({ token: "ghu_..." });
 await client2.init();
 ```
 
-## Authentication
+## Autenticazione
 
-The library handles the full Copilot auth flow:
+La libreria gestisce l'intero flusso di autenticazione Copilot:
 
-1. **Resolve a GitHub token** — from explicit `token` option, `GH_COPILOT_TOKEN` env, or `~/.config/github-copilot/hosts.json`
-2. **Exchange it** for a short-lived Copilot session token via `api.github.com/copilot_internal/v2/token`
-3. **Auto-refresh** the session token before it expires
+1. **Risolve un token GitHub** — da opzione `token` esplicita, variabile d'ambiente `GH_COPILOT_TOKEN`, `localStorage` (browser) o `~/.config/github-copilot/hosts.json` (Node.js)
+2. **Lo scambia** con un token di sessione Copilot a breve scadenza tramite `api.github.com/copilot_internal/v2/token`
+3. **Aggiorna automaticamente** il token di sessione prima della scadenza
 
-### Supported token types
+### Tipi di token supportati
 
-| Token | How to get |
-|-------|-----------|
-| `ghu_...` (OAuth) | Device flow or Copilot editor sign-in |
-| `ghp_...` (Classic PAT) | github.com → Settings → Tokens (needs `copilot` scope) |
+| Token | Come ottenerlo |
+|-------|----------------|
+| `ghu_...` (OAuth) | Device flow o accesso tramite editor Copilot |
+| `ghp_...` (Classic PAT) | github.com → Impostazioni → Token (richiede scope `copilot`) |
 
-### Device Flow (recommended)
-
-The token is **automatically persisted** to `~/.config/github-copilot/hosts.json` after the first device flow. Subsequent calls to `init()` will find it there — no need to re-authenticate.
+### Node.js
 
 ```ts
 const client = new CopilotChatClient();
 
 try {
-  // Finds token in env, hosts.json, or apps.json
+  // Trova il token nella variabile d'ambiente o in ~/.config/github-copilot/hosts.json
   await client.init();
 } catch {
-  // First time only — opens browser for GitHub authorization
+  // Solo al primo utilizzo — device flow interattivo, salva in hosts.json
   await client.initWithDeviceFlow(
-    (codes) => {
-      console.log(`Open ${codes.verificationUri} and enter: ${codes.userCode}`);
-    },
-    { persist: true }, // default: true — saves to hosts.json
+    (codes) => console.log(`Apri ${codes.verificationUri} e inserisci: ${codes.userCode}`),
   );
 }
-
-// From now on, client.init() will just work
 ```
 
-To disable persistence, pass `{ persist: false }`. You can also manage the config manually:
+### Browser
+
+Tutti gli endpoint API di GitHub/Copilot bloccano le richieste preflight CORS dai browser.
+La cartella `extension/` contiene una minima estensione Chrome (Manifest V3) che fa passare **tutte** le richieste attraverso il suo service worker, bypassando completamente il CORS.
+
+#### Installazione dell'estensione
+
+1. Apri **Chrome** (o qualsiasi browser basato su Chromium: Edge, Brave, Arc, …)
+2. Naviga su `chrome://extensions`
+3. Abilita la **modalità sviluppatore** (toggle in alto a destra)
+4. Clicca su **Carica estensione non pacchettizzata**
+5. Seleziona la cartella `extension/` all'interno di questo repository
+6. L'estensione **GHC Auth Bridge** dovrebbe apparire nell'elenco con un toggle verde
+
+> Dopo aver aggiornato i file dell'estensione, clicca il pulsante ↻ aggiorna sulla scheda dell'estensione, poi **ricarica la pagina**.
+
+#### Utilizzo
+
+Usa `createExtensionFetch()` come funzione fetch per il client:
 
 ```ts
-import { saveTokenToConfig, readTokenFromConfig } from "ghc-isomorphic-adapter";
+import {
+  CopilotChatClient, createExtensionFetch, requestTokenFromExtension,
+} from "ghc-isomorphic-adapter";
 
-await saveTokenToConfig("ghu_...");           // write
-const token = await readTokenFromConfig();     // read
+// Tutte le richieste HTTP passano attraverso l'estensione (nessun CORS)
+const fetchFn = createExtensionFetch();
+let client = new CopilotChatClient({ fetchFn });
+
+try {
+  await client.init(); // legge il token da localStorage
+} catch {
+  // Prima volta: device flow tramite estensione
+  const token = await requestTokenFromExtension((codes) => {
+    document.body.textContent = `Apri ${codes.verificationUri} e inserisci: ${codes.userCode}`;
+  });
+  client = new CopilotChatClient({ token, fetchFn });
+  await client.init();
+}
+// ✅ Streaming, modelli, chat — tutto funziona
 ```
 
-## List Models
+Vedi `examples/browser.html` per un'interfaccia chat completa e funzionante.
+
+**Senza l'estensione (iniezione manuale del token):**
+
+```ts
+import { CopilotChatClient, createExtensionFetch, saveTokenToStorage } from "ghc-isomorphic-adapter";
+
+saveTokenToStorage("ghu_..."); // una volta sola
+const client = new CopilotChatClient({ fetchFn: createExtensionFetch() });
+await client.init(); // legge da localStorage, tutte le richieste passano per l'estensione
+```
+
+### Persistenza del token
+
+| Ambiente | Storage | Automatico con `initWithDeviceFlow` |
+|----------|---------|-------------------------------------|
+| **Node.js** | `~/.config/github-copilot/hosts.json` | ✅ |
+| **Browser** | `localStorage` (`ghc_oauth_token`) | ✅ |
+
+Controllo manuale:
+
+```ts
+import {
+  saveToken, readTokenFromConfig, readTokenFromStorage, clearTokenFromStorage,
+} from "ghc-isomorphic-adapter";
+
+await saveToken("ghu_...");              // scrive sia in localStorage che in hosts.json
+readTokenFromStorage();                  // browser: legge da localStorage
+await readTokenFromConfig();             // Node.js: legge da hosts.json
+clearTokenFromStorage();                 // browser: rimuove da localStorage
+```
+
+## Lista modelli
 
 ```ts
 const models = await client.getModels();
@@ -88,7 +146,7 @@ console.log(models.map((m) => `${m.id} (${m.vendor})`));
 ```ts
 const response = await client.complete({
   model: "gpt-5-mini",
-  messages: [{ role: "user", content: "Hello!" }],
+  messages: [{ role: "user", content: "Ciao!" }],
 });
 
 console.log(response.choices[0].message?.content);
@@ -99,15 +157,15 @@ console.log(response.choices[0].message?.content);
 ```ts
 for await (const event of client.stream({
   model: "gpt-5-mini",
-  messages: [{ role: "user", content: "Explain TypeScript in 3 sentences." }],
+  messages: [{ role: "user", content: "Spiega TypeScript in 3 frasi." }],
 })) {
   process.stdout.write(event.choices[0]?.delta?.content ?? "");
 }
 ```
 
-## Sessions
+## Sessioni
 
-`ChatSession` maintains conversation history and handles tool-call loops automatically:
+`ChatSession` mantiene la cronologia della conversazione e gestisce automaticamente i cicli di chiamata agli strumenti:
 
 ```ts
 import { CopilotChatClient, ChatSession } from "ghc-isomorphic-adapter";
@@ -117,22 +175,22 @@ await client.init();
 
 const session = new ChatSession(client, {
   model: "gpt-5-mini",
-  systemPrompt: "You are a helpful assistant.",
+  systemPrompt: "Sei un assistente utile.",
 });
 
 // Non-streaming
-const reply = await session.send("What is TypeScript?");
+const reply = await session.send("Cos'è TypeScript?");
 console.log(reply);
 
-// Streaming (same session, maintains context)
-for await (const chunk of session.sendStream("Tell me more.")) {
+// Streaming (stessa sessione, mantiene il contesto)
+for await (const chunk of session.sendStream("Dimmi di più.")) {
   process.stdout.write(chunk);
 }
 ```
 
-## Tool Calling
+## Chiamata a strumenti (Tool Calling)
 
-Define tools and handlers — the session runs the tool-call loop automatically:
+Definisci strumenti e handler — la sessione esegue automaticamente il ciclo di tool call:
 
 ```ts
 import { ChatSession, type Tool, type ToolHandler } from "ghc-isomorphic-adapter";
@@ -142,7 +200,7 @@ const tools: Tool[] = [
     type: "function",
     function: {
       name: "get_weather",
-      description: "Get weather for a city",
+      description: "Ottieni il meteo per una città",
       parameters: {
         type: "object",
         properties: { city: { type: "string" } },
@@ -154,7 +212,7 @@ const tools: Tool[] = [
 
 const toolHandlers: Record<string, ToolHandler> = {
   get_weather: async (args) => {
-    return JSON.stringify({ city: args.city, temp: "22°C", condition: "Sunny" });
+    return JSON.stringify({ city: args.city, temp: "22°C", condition: "Soleggiato" });
   },
 };
 
@@ -165,55 +223,60 @@ const session = new ChatSession(client, {
   maxToolRounds: 5, // default: 10
 });
 
-// The session automatically invokes tool handlers and continues the conversation
-const answer = await session.send("What's the weather in Rome?");
+// La sessione invoca automaticamente gli handler degli strumenti e continua la conversazione
+const answer = await session.send("Che tempo fa a Roma?");
 ```
 
 ## GitHub Enterprise
 
 ```ts
 const client = new CopilotChatClient({
-  enterpriseUri: "https://github.mycompany.com",
+  enterpriseUri: "https://github.miazienda.com",
 });
 ```
 
-## API Reference
+## Riferimento API
 
 ### `CopilotChatClient`
 
-| Method | Description |
+| Metodo | Descrizione |
 |--------|-------------|
-| `new CopilotChatClient(options?)` | Create client. Options: `token`, `apiEndpoint`, `editorVersion`, `enterpriseUri`, `githubApiUrl` |
-| `init()` | Resolve token, exchange for session token, discover endpoint. **Must call first.** |
-| `initWithDeviceFlow(onCodes, options?)` | Interactive OAuth device flow auth. Returns the GitHub token. |
-| `getModels(forceRefresh?)` | List available chat models |
-| `complete(request, options?)` | Non-streaming chat completion |
-| `stream(request, options?)` | Streaming chat completion → `AsyncGenerator<ResponseEvent>` |
-| `getApiEndpoint()` | Get resolved API endpoint |
+| `new CopilotChatClient(options?)` | Crea il client. Opzioni: `token`, `apiEndpoint`, `editorVersion`, `enterpriseUri`, `githubApiUrl` |
+| `init()` | Risolve il token, lo scambia per un token di sessione e scopre l'endpoint. **Da chiamare per primo.** |
+| `initWithDeviceFlow(onCodes, options?)` | Autenticazione interattiva tramite OAuth device flow. Restituisce il token GitHub. |
+| `getModels(forceRefresh?)` | Elenca i modelli di chat disponibili |
+| `complete(request, options?)` | Chat completion non-streaming |
+| `stream(request, options?)` | Chat completion in streaming → `AsyncGenerator<ResponseEvent>` |
+| `getApiEndpoint()` | Ottieni l'endpoint API risolto |
 
 ### `ChatSession`
 
-| Method | Description |
+| Metodo | Descrizione |
 |--------|-------------|
-| `new ChatSession(client, options)` | Create session. Options: `model`, `systemPrompt?`, `tools?`, `toolHandlers?`, `temperature?`, `maxToolRounds?` |
-| `send(content, options?)` | Send message, return full response (handles tool loops) |
-| `sendStream(content, options?)` | Stream response chunks → `AsyncGenerator<string>` |
-| `getMessages()` | Get conversation history |
-| `addUserMessage(content)` | Manually add user message |
-| `addAssistantMessage(content, toolCalls?)` | Manually add assistant message |
-| `addToolResult(toolCallId, content)` | Manually add tool result |
-| `clear(keepSystemPrompt?)` | Clear history |
+| `new ChatSession(client, options)` | Crea una sessione. Opzioni: `model`, `systemPrompt?`, `tools?`, `toolHandlers?`, `temperature?`, `maxToolRounds?` |
+| `send(content, options?)` | Invia un messaggio, restituisce la risposta completa (gestisce i cicli di tool call) |
+| `sendStream(content, options?)` | Risposta in streaming → `AsyncGenerator<string>` |
+| `getMessages()` | Ottieni la cronologia della conversazione |
+| `addUserMessage(content)` | Aggiungi manualmente un messaggio utente |
+| `addAssistantMessage(content, toolCalls?)` | Aggiungi manualmente un messaggio dell'assistente |
+| `addToolResult(toolCallId, content)` | Aggiungi manualmente un risultato di uno strumento |
+| `clear(keepSystemPrompt?)` | Cancella la cronologia |
 
-### Standalone Functions
+### Funzioni standalone
 
-| Function | Description |
+| Funzione | Descrizione |
 |----------|-------------|
-| `resolveToken(explicit?)` | Resolve GitHub token (explicit → env → config) |
-| `readTokenFromConfig(domain?)` | Read token from Copilot config files (Node.js only) |
-| `exchangeToken(githubToken, apiUrl?)` | Exchange GitHub token for Copilot session token |
-| `TokenManager` | Auto-refreshing session token manager |
-| `startDeviceFlow(options?)` | Start OAuth device flow (returns codes) |
-| `pollDeviceFlow(codes, options?)` | Poll until user completes device flow |
-| `fetchModels(token, endpoint, editorVersion?)` | Fetch and filter available models |
-| `parseSSEStream(response)` | Parse a fetch Response as SSE → `AsyncIterable<ResponseEvent>` |
-
+| `resolveToken(explicit?)` | Risolve il token GitHub (esplicito → env → localStorage → config) |
+| `readTokenFromStorage()` | Legge il token da `localStorage` (browser) |
+| `saveTokenToStorage(token)` | Scrive il token in `localStorage` (browser) |
+| `clearTokenFromStorage()` | Rimuove il token da `localStorage` (browser) |
+| `readTokenFromConfig(domain?)` | Legge il token dai file di configurazione Copilot (Node.js) |
+| `saveToken(token, options?)` | Persiste il token (localStorage + hosts.json) |
+| `exchangeToken(githubToken, apiUrl?)` | Scambia il token GitHub con un token di sessione Copilot |
+| `TokenManager` | Gestore del token di sessione con aggiornamento automatico |
+| `startDeviceFlow(options?)` | Avvia il device flow OAuth (solo Node.js) |
+| `pollDeviceFlow(codes, options?)` | Attende il completamento del device flow da parte dell'utente (solo Node.js) |
+| `requestTokenFromExtension(onCodes, options?)` | Device flow tramite estensione Auth Bridge (browser) |
+| `createExtensionFetch()` | Restituisce una funzione `fetch` che fa da proxy attraverso l'estensione (browser) |
+| `fetchModels(token, endpoint, editorVersion?)` | Recupera e filtra i modelli disponibili |
+| `parseSSEStream(response)` | Analizza una risposta fetch come SSE → `AsyncIterable<ResponseEvent>` |

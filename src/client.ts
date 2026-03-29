@@ -1,4 +1,4 @@
-import { resolveToken, saveTokenToConfig } from "./auth.js";
+import { resolveToken, saveToken } from "./auth.js";
 import { startDeviceFlow, pollDeviceFlow } from "./device-flow.js";
 import { CopilotApiError } from "./errors.js";
 import { fetchModels } from "./models.js";
@@ -73,6 +73,7 @@ export class CopilotChatClient {
   private githubApiUrl?: string;
   private explicitToken?: string;
   private explicitEndpoint?: string;
+  private fetchFn: typeof globalThis.fetch;
   private models: Model[] | null = null;
   private initialized = false;
 
@@ -82,6 +83,7 @@ export class CopilotChatClient {
     this.editorVersion = options.editorVersion ?? DEFAULT_EDITOR_VERSION;
     this.enterpriseUri = options.enterpriseUri;
     this.githubApiUrl = options.githubApiUrl;
+    this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
   }
 
   /**
@@ -91,7 +93,7 @@ export class CopilotChatClient {
    */
   async init(): Promise<void> {
     const githubToken = await resolveToken(this.explicitToken);
-    this.tokenManager = new TokenManager(githubToken, this.githubApiUrl);
+    this.tokenManager = new TokenManager(githubToken, this.githubApiUrl, this.fetchFn);
 
     // Exchange token — this also gives us the API endpoint
     const info = await this.tokenManager.getToken();
@@ -124,10 +126,10 @@ export class CopilotChatClient {
 
     // Persist token to ~/.config/github-copilot/hosts.json so next init() finds it
     if (options?.persist !== false) {
-      await saveTokenToConfig(githubToken);
+      await saveToken(githubToken);
     }
 
-    this.tokenManager = new TokenManager(githubToken, this.githubApiUrl);
+    this.tokenManager = new TokenManager(githubToken, this.githubApiUrl, this.fetchFn);
     const info = await this.tokenManager.getToken();
     this.apiEndpoint = this.explicitEndpoint ?? info.endpoints.api;
     this.initialized = true;
@@ -164,6 +166,7 @@ export class CopilotChatClient {
         sessionToken,
         this.apiEndpoint,
         this.editorVersion,
+        this.fetchFn,
       );
     }
     return this.models;
@@ -238,7 +241,7 @@ export class CopilotChatClient {
       hasVision,
     });
 
-    return fetch(url, {
+    return this.fetchFn(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),

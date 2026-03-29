@@ -14,10 +14,11 @@ export async function fetchModels(
   token: string,
   apiEndpoint: string,
   editorVersion?: string,
+  fetchFn: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<Model[]> {
   const url = `${apiEndpoint}/models`;
 
-  const res = await fetch(url, {
+  const res = await fetchFn(url, {
     method: "GET",
     headers: buildHeaders(token, { editorVersion }),
   });

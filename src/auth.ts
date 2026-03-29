@@ -1,28 +1,79 @@
 import { CopilotAuthError } from "./errors.js";
 
 const COPILOT_OAUTH_ENV_VAR = "GH_COPILOT_TOKEN";
+const LOCAL_STORAGE_KEY = "ghc_oauth_token";
 
 /**
  * Resolve a Copilot OAuth token.
- * Priority: explicit token > environment variable > config files (Node.js only).
+ * Priority: explicit token > environment variable > localStorage (browser) > config files (Node.js).
  */
 export async function resolveToken(explicit?: string): Promise<string> {
   if (explicit) return explicit;
 
-  // Environment variable (works in Node.js; in browsers, this is typically undefined)
+  // Environment variable (Node.js)
   if (typeof process !== "undefined" && process.env?.[COPILOT_OAUTH_ENV_VAR]) {
     return process.env[COPILOT_OAUTH_ENV_VAR]!;
   }
 
-  // Try reading from config files (Node.js only)
+  // localStorage (browser)
+  const fromStorage = readTokenFromStorage();
+  if (fromStorage) return fromStorage;
+
+  // Config files (Node.js only)
   const fromConfig = await readTokenFromConfig();
   if (fromConfig) return fromConfig;
 
   throw new CopilotAuthError(
     "No Copilot OAuth token found. Provide one explicitly, set GH_COPILOT_TOKEN, " +
-      "or sign in to GitHub Copilot (hosts.json / apps.json).",
+      "or sign in via device flow.",
   );
 }
+
+// ── Browser: localStorage ─────────────────────────────────────────
+
+/**
+ * Read the OAuth token from localStorage.
+ * Browser only – returns null in Node.js.
+ */
+export function readTokenFromStorage(): string | null {
+  try {
+    if (typeof localStorage !== "undefined") {
+      return localStorage.getItem(LOCAL_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage not available or blocked
+  }
+  return null;
+}
+
+/**
+ * Save the OAuth token to localStorage.
+ * Browser only – no-op in Node.js.
+ */
+export function saveTokenToStorage(token: string): void {
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(LOCAL_STORAGE_KEY, token);
+    }
+  } catch {
+    // localStorage not available or blocked
+  }
+}
+
+/**
+ * Remove the OAuth token from localStorage.
+ */
+export function clearTokenFromStorage(): void {
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage not available or blocked
+  }
+}
+
+// ── Node.js: config files ─────────────────────────────────────────
 
 /**
  * Read the OAuth token from GitHub Copilot config files.
@@ -32,7 +83,6 @@ export async function readTokenFromConfig(
   domain = "github.com",
 ): Promise<string | null> {
   try {
-    // Dynamic import so this tree-shakes in browser bundles
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const os = await import("node:os");
@@ -89,16 +139,18 @@ function extractToken(raw: string, domain: string): string | null {
 }
 
 /**
- * Persist a GitHub OAuth token to `~/.config/github-copilot/hosts.json`.
- * This is the same file used by VS Code, Neovim, and other Copilot editors,
- * so the token will be picked up automatically on next `init()`.
- *
- * Node.js only – no-op in browser environments.
+ * Persist a GitHub OAuth token.
+ * - **Node.js**: writes to `~/.config/github-copilot/hosts.json`
+ * - **Browser**: writes to `localStorage`
  */
-export async function saveTokenToConfig(
+export async function saveToken(
   token: string,
   options?: { domain?: string; user?: string; githubAppId?: string },
 ): Promise<void> {
+  // Browser: localStorage
+  saveTokenToStorage(token);
+
+  // Node.js: hosts.json
   try {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
@@ -110,7 +162,6 @@ export async function saveTokenToConfig(
     const domain = options?.domain ?? "github.com";
     const githubAppId = options?.githubAppId ?? "Iv1.b507a08c87ecfe98";
 
-    // Read existing file or start fresh
     let existing: Record<string, unknown> = {};
     try {
       const raw = await fs.readFile(filePath, "utf-8");
@@ -131,6 +182,6 @@ export async function saveTokenToConfig(
     await fs.mkdir(configDir, { recursive: true });
     await fs.writeFile(filePath, JSON.stringify(existing, null, 2) + "\n", "utf-8");
   } catch {
-    // Browser or write failure – silently ignore
+    // Browser or write failure – localStorage already handled above
   }
 }

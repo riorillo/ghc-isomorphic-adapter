@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "GHC Auth Bridge",
+  "version": "1.0.0",
+  "description": "Proxies GitHub Copilot API requests from browser apps (educational).",
+  "permissions": [],
+  "host_permissions": [
+    "https://github.com/login/*",
+    "https://api.github.com/*",
+    "https://*.githubcopilot.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

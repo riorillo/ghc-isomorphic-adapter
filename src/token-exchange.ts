@@ -22,10 +22,11 @@ interface TokenExchangeResponse {
 export async function exchangeToken(
   githubToken: string,
   githubApiUrl = DEFAULT_GITHUB_API,
+  fetchFn: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<CopilotTokenInfo> {
   const url = `${githubApiUrl.replace(/\/+$/, "")}${TOKEN_EXCHANGE_PATH}`;
 
-  const res = await fetch(url, {
+  const res = await fetchFn(url, {
     method: "GET",
     headers: {
       Authorization: `token ${githubToken}`,
@@ -72,12 +73,18 @@ export async function exchangeToken(
 export class TokenManager {
   private githubToken: string;
   private githubApiUrl: string;
+  private fetchFn: typeof globalThis.fetch;
   private tokenInfo: CopilotTokenInfo | null = null;
   private refreshPromise: Promise<CopilotTokenInfo> | null = null;
 
-  constructor(githubToken: string, githubApiUrl = DEFAULT_GITHUB_API) {
+  constructor(
+    githubToken: string,
+    githubApiUrl = DEFAULT_GITHUB_API,
+    fetchFn: typeof globalThis.fetch = globalThis.fetch,
+  ) {
     this.githubToken = githubToken;
     this.githubApiUrl = githubApiUrl;
+    this.fetchFn = fetchFn;
   }
 
   /**
@@ -107,7 +114,7 @@ export class TokenManager {
   }
 
   private async refresh(): Promise<CopilotTokenInfo> {
-    this.tokenInfo = await exchangeToken(this.githubToken, this.githubApiUrl);
+    this.tokenInfo = await exchangeToken(this.githubToken, this.githubApiUrl, this.fetchFn);
     return this.tokenInfo;
   }
 }
